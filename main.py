@@ -1,5 +1,5 @@
 import streamlit as st, pandas as pd, numpy as np, yfinance as yf
-import ploty.express as px
+import plotly.express as px
 
 st.title('Stock Dashboard')
 ticker = st.sidebar.text_input('ticker')
