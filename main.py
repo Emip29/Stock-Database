@@ -3,118 +3,144 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.express as px
-from alpha_vantage.fundamentaldata import FundamentalData
-from stocknews import StockNews
 
-st.title("Stock Dashboard")
+# --------------------------------------------
+# TITLE + SIDEBAR
+# --------------------------------------------
+st.title("📈 Stock Dashboard")
 
-# ---------------- Sidebar Inputs ----------------
-ticker = st.sidebar.text_input("Ticker (e.g. AAPL)").upper()
+ticker = st.sidebar.text_input("Ticker (ex: AAPL, TSLA, MSFT)")
 start_date = st.sidebar.date_input("Start Date")
 end_date = st.sidebar.date_input("End Date")
 
-# ---------------- Validation ----------------
-if not ticker:
-    st.warning("Please enter a ticker symbol.")
-    st.stop()
+# --------------------------------------------
+# DOWNLOAD DATA
+# --------------------------------------------
+if ticker:
+    data = yf.download(ticker, start=start_date, end=end_date)
 
-if start_date >= end_date:
-    st.error("Start date must be before end date.")
-    st.stop()
-
-# ---------------- Download Stock Data ----------------
-data = yf.download(ticker, start=start_date, end=end_date)
-
-if data.empty:
-    st.error("No stock data found. Check ticker or date range.")
-    st.stop()
-
-# Fix MultiIndex columns
-if isinstance(data.columns, pd.MultiIndex):
-    data.columns = data.columns.get_level_values(0)
-
-# Normalize "Adj Close"
-if "Adj Close" not in data.columns:
-    # Sometimes yfinance uses AdjClose
-    if "AdjClose" in data.columns:
-        data.rename(columns={"AdjClose": "Adj Close"}, inplace=True)
-    else:
-        st.error("'Adj Close' column not found in downloaded data.")
-        st.write("Columns returned:", list(data.columns))
+    if data.empty:
+        st.error("⚠️ No data found for this ticker.")
         st.stop()
 
-# ---------------- Price Chart ----------------
-fig = px.line(data, x=data.index, y=data["Adj Close"], title=f"{ticker} Adjusted Closing Prices")
-st.plotly_chart(fig)
+    # Use Adj Close if exists, else Close
+    price_col = "Adj Close" if "Adj Close" in data.columns else "Close"
 
-# ---------------- Tabs ----------------
-pricing_data, fundamental_data, news = st.tabs(
-    ["Pricing Data", "Fundamental Data", "Top 10 News"]
-)
+    # --------------------------------------------
+    # PRICE CHART
+    # --------------------------------------------
+    fig = px.line(
+        data,
+        x=data.index,
+        y=data[price_col],
+        title=f"{ticker} Price Chart",
+        labels={"x": "Date", "y": price_col}
+    )
+    st.plotly_chart(fig)
 
-# ---------------- PRICING DATA TAB ----------------
-with pricing_data:
-    st.header("Price Movements")
+    # --------------------------------------------
+    # TABS
+    # --------------------------------------------
+    pricing_data, fundamental_data, news = st.tabs(
+        ["📊 Pricing Data", "📚 Fundamental Data", "📰 Top 10 News"]
+    )
 
-    data2 = data.copy()
-    data2["% Change"] = data2["Adj Close"].pct_change()
-    data2.dropna(inplace=True)
+    # --------------------------------------------
+    # PRICING DATA TAB
+    # --------------------------------------------
+    with pricing_data:
+        st.header("Price Movements")
 
-    st.write(data2)
+        data2 = data.copy()
+        data2["% Change"] = data2[price_col].pct_change()
+        data2.dropna(inplace=True)
 
-    annual_return = data2["% Change"].mean() * 252 * 100
-    st.write("Annual Return:", round(annual_return, 2), "%")
+        st.write(data2)
 
-    stdev = np.std(data2["% Change"]) * np.sqrt(252)
-    st.write("Standard Deviation:", round(stdev * 100, 2), "%")
+        # Stats
+        annual_return = data2["% Change"].mean() * 252 * 100
+        stdev = np.std(data2["% Change"]) * np.sqrt(252) * 100
 
-# ---------------- FUNDAMENTAL DATA TAB ----------------
-with fundamental_data:
-    st.header("Fundamental Data")
+        st.write(f"**Annual Return:** {annual_return:.2f}%")
+        st.write(f"**Standard Deviation:** {stdev:.2f}%")
 
-    key = "XCWQ3FD4VCKVL1NA"  # Your Alpha Vantage key
-    fd = FundamentalData(key, output_format="pandas")
+        # -------------------------
+        # TECHNICAL INDICATORS
+        # -------------------------
+        st.subheader("Technical Indicators")
 
-    # BALANCE SHEET
-    st.subheader("Balance Sheet")
-    balance_sheet = fd.get_balance_sheet_annual(ticker)[0]
-    bs = balance_sheet.T[2:]
-    bs.columns = list(balance_sheet.T.iloc[0])
-    st.write(bs)
+        # Moving Averages
+        data2["MA20"] = data2[price_col].rolling(20).mean()
+        data2["MA50"] = data2[price_col].rolling(50).mean()
+        data2["MA200"] = data2[price_col].rolling(200).mean()
 
-    # INCOME STATEMENT
-    st.subheader("Income Statement")
-    income_statement = fd.get_income_statement_annual(ticker)[0]
-    is1 = income_statement.T[2:]
-    is1.columns = list(income_statement.T.iloc[0])
-    st.write(is1)
+        # RSI
+        delta = data2[price_col].diff()
+        gain = np.where(delta > 0, delta, 0)
+        loss = np.where(delta < 0, -delta, 0)
 
-    # CASH FLOW
-    st.subheader("Cash Flow Statement")
-    cash_flow = fd.get_cash_flow_annual(ticker)[0]
-    cf = cash_flow.T[2:]
-    cf.columns = list(cash_flow.T.iloc[0])
-    st.write(cf)
+        avg_gain = pd.Series(gain).rolling(window=14).mean()
+        avg_loss = pd.Series(loss).rolling(window=14).mean()
 
-with news:
-    st.header(f"News for {ticker}")
+        rs = avg_gain / avg_loss
+        data2["RSI"] = 100 - (100 / (1 + rs))
 
-    try:
+        # MACD
+        exp1 = data2[price_col].ewm(span=12, adjust=False).mean()
+        exp2 = data2[price_col].ewm(span=26, adjust=False).mean()
+        data2["MACD"] = exp1 - exp2
+        data2["Signal"] = data2["MACD"].ewm(span=9, adjust=False).mean()
+
+        st.line_chart(data2[[price_col, "MA20", "MA50", "MA200"]])
+        st.line_chart(data2["RSI"])
+        st.line_chart(data2[["MACD", "Signal"]])
+
+    # --------------------------------------------
+    # FUNDAMENTALS TAB
+    # --------------------------------------------
+    from alpha_vantage.fundamentaldata import FundamentalData
+
+    with fundamental_data:
+        key = "XCWQ3FD4VCKVL1NA"
+        fd = FundamentalData(key, output_format="pandas")
+
+        st.subheader("Balance Sheet")
+        balance_sheet = fd.get_balance_sheet_annual(ticker)[0]
+        bs = balance_sheet.T[2:]
+        bs.columns = list(balance_sheet.T.iloc[0])
+        st.write(bs)
+
+        st.subheader("Income Statement")
+        income_statement = fd.get_income_statement_annual(ticker)[0]
+        is1 = income_statement.T[2:]
+        is1.columns = list(income_statement.T.iloc[0])
+        st.write(is1)
+
+        st.subheader("Cash Flow Statement")
+        cash_flow = fd.get_cash_flow_annual(ticker)[0]
+        cf = cash_flow.T[2:]
+        cf.columns = list(cash_flow.T.iloc[0])
+        st.write(cf)
+
+    # --------------------------------------------
+    # NEWS TAB
+    # --------------------------------------------
+    from stocknews import StockNews
+
+    with news:
+        st.header(f"News for {ticker}")
+
         sn = StockNews(ticker, save_news=False)
         df_news = sn.read_rss()
 
-        for i in range(min(10, len(df_news))):
-            st.subheader(f"News {i+1}")
+        for i in range(10):
+            st.subheader(f"News {i + 1}")
             st.write(df_news["published"][i])
             st.write(df_news["title"][i])
             st.write(df_news["summary"][i])
 
             title_sentiment = df_news["sentiment_title"][i]
-            news_sentiment = df_news["sentiment_summary"][i]
+            summary_sentiment = df_news["sentiment_summary"][i]
 
-            st.write(f"Title Sentiment: {title_sentiment}")
-            st.write(f"News Sentiment: {news_sentiment}")
-
-    except Exception as e:
-        st.error("Could not load news.")
-        st.write(e)
+            st.write(f"Title Sentiment Score: **{title_sentiment}**")
+            st.write(f"News Sentiment Score: **{summary_sentiment}**")
