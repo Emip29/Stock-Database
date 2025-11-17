@@ -4,50 +4,41 @@ import numpy as np
 import yfinance as yf
 import plotly.express as px
 
-# --------------------------------------------
-# TITLE + SIDEBAR
-# --------------------------------------------
 st.title("📈 Stock Dashboard")
 
 ticker = st.sidebar.text_input("Ticker (ex: AAPL, TSLA, MSFT)")
 start_date = st.sidebar.date_input("Start Date")
 end_date = st.sidebar.date_input("End Date")
 
-# --------------------------------------------
-# DOWNLOAD DATA
-# --------------------------------------------
 if ticker:
     data = yf.download(ticker, start=start_date, end=end_date)
 
     if data.empty:
-        st.error("⚠️ No data found for this ticker.")
+        st.error("⚠️ No price data found. Try another ticker.")
         st.stop()
 
-    # Use Adj Close if exists, else Close
     price_col = "Adj Close" if "Adj Close" in data.columns else "Close"
 
-    # --------------------------------------------
-    # PRICE CHART
-    # --------------------------------------------
+    # ---------------------------------------
+    # FIXED PLOT (narwhals-safe)
+    # ---------------------------------------
+    df_plot = data.reset_index()
+
     fig = px.line(
-        data,
-        x=data.index,
-        y=data[price_col],
-        title=f"{ticker} Price Chart",
-        labels={"x": "Date", "y": price_col}
+        df_plot,
+        x="Date",
+        y=price_col,
+        title=f"{ticker} Price Chart"
     )
     st.plotly_chart(fig)
 
-    # --------------------------------------------
-    # TABS
-    # --------------------------------------------
     pricing_data, fundamental_data, news = st.tabs(
-        ["📊 Pricing Data", "📚 Fundamental Data", "📰 Top 10 News"]
+        ["📊 Pricing Data", "📚 Fundamental Data", "📰 Top News"]
     )
 
-    # --------------------------------------------
-    # PRICING DATA TAB
-    # --------------------------------------------
+    # ---------------------------------------
+    # PRICING DATA
+    # ---------------------------------------
     with pricing_data:
         st.header("Price Movements")
 
@@ -57,49 +48,23 @@ if ticker:
 
         st.write(data2)
 
-        # Stats
         annual_return = data2["% Change"].mean() * 252 * 100
         stdev = np.std(data2["% Change"]) * np.sqrt(252) * 100
 
         st.write(f"**Annual Return:** {annual_return:.2f}%")
         st.write(f"**Standard Deviation:** {stdev:.2f}%")
 
-        # -------------------------
-        # TECHNICAL INDICATORS
-        # -------------------------
-        st.subheader("Technical Indicators")
-
-        # Moving Averages
+        # Moving averages
         data2["MA20"] = data2[price_col].rolling(20).mean()
         data2["MA50"] = data2[price_col].rolling(50).mean()
         data2["MA200"] = data2[price_col].rolling(200).mean()
 
-        # RSI
-        delta = data2[price_col].diff()
-        gain = np.where(delta > 0, delta, 0)
-        loss = np.where(delta < 0, -delta, 0)
-
-        avg_gain = pd.Series(gain).rolling(window=14).mean()
-        avg_loss = pd.Series(loss).rolling(window=14).mean()
-
-        rs = avg_gain / avg_loss
-        data2["RSI"] = 100 - (100 / (1 + rs))
-
-        # MACD
-        exp1 = data2[price_col].ewm(span=12, adjust=False).mean()
-        exp2 = data2[price_col].ewm(span=26, adjust=False).mean()
-        data2["MACD"] = exp1 - exp2
-        data2["Signal"] = data2["MACD"].ewm(span=9, adjust=False).mean()
-
         st.line_chart(data2[[price_col, "MA20", "MA50", "MA200"]])
-        st.line_chart(data2["RSI"])
-        st.line_chart(data2[["MACD", "Signal"]])
 
-    # --------------------------------------------
-    # FUNDAMENTALS TAB
-    # --------------------------------------------
+    # ---------------------------------------
+    # FUNDAMENTALS
+    # ---------------------------------------
     from alpha_vantage.fundamentaldata import FundamentalData
-
     with fundamental_data:
         key = "XCWQ3FD4VCKVL1NA"
         fd = FundamentalData(key, output_format="pandas")
@@ -122,9 +87,9 @@ if ticker:
         cf.columns = list(cash_flow.T.iloc[0])
         st.write(cf)
 
-    # --------------------------------------------
+    # ---------------------------------------
     # NEWS TAB
-    # --------------------------------------------
+    # ---------------------------------------
     from stocknews import StockNews
 
     with news:
@@ -139,8 +104,5 @@ if ticker:
             st.write(df_news["title"][i])
             st.write(df_news["summary"][i])
 
-            title_sentiment = df_news["sentiment_title"][i]
-            summary_sentiment = df_news["sentiment_summary"][i]
-
-            st.write(f"Title Sentiment Score: **{title_sentiment}**")
-            st.write(f"News Sentiment Score: **{summary_sentiment}**")
+            st.write(f"Title Sentiment: {df_news['sentiment_title'][i]}")
+            st.write(f"Summary Sentiment: {df_news['sentiment_summary'][i]}")
